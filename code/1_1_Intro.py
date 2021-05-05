@@ -3,13 +3,16 @@ from Bio import Entrez, SeqIO
 # Account Info
 Entrez.email = "kid1064@gmail.com"
 
+# Nucleotide gene-info load
 handle = Entrez.esearch(
     db="nucleotide",
     term='CRT[Gene Name] AND "Plasmodium falciparum"[Organism]'
 )
 
+# Data load
 rec_list = Entrez.read(handle)
 
+# Data transform
 if rec_list['RetMax'] < rec_list['Count']:
     handle = Entrez.esearch(
         db="nucleotide",
@@ -33,3 +36,17 @@ for rec in recs:
         break
 print(rec.name)
 print(rec.description)
+
+for feature in rec.features:
+    if feature.type == 'gene':
+        print(feature.qualifiers['gene'])
+    elif feature.type == 'exon':
+        loc = feature.location
+        print(loc.start, loc.end, loc.strand)
+    else:
+        print(f"not processed:\n{feature}")
+
+for name, value in rec.annotations.items():
+    print(f"{name}-{value}")
+
+print(len(rec.seq))
