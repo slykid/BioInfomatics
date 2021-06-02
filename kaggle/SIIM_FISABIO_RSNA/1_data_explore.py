@@ -53,6 +53,8 @@ train = train[["uid", "image_id", "negative_pneumonia", "typical_appearance", "i
 print(train.columns)
 print(train.info())
 
+train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
+
 # boxes, label 컬럼 정제 필요
 # 1) boxes 컬럼 정제
 train["box1"] = ""
@@ -71,4 +73,3 @@ for i in range(0, len(train["uid"])):
 # 2) label 컬럼 정제
 print(train["label"][0])
 
-train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
