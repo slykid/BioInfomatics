@@ -51,9 +51,24 @@ print(train.columns)
 
 train = train[["uid", "image_id", "negative_pneumonia", "typical_appearance", "indeterminate_appearance", "atypical_appearance", "boxes", "label"]]
 print(train.columns)
+print(train.info())
 
 # boxes, label 컬럼 정제 필요
-# 1) label 컬럼 정제
+# 1) boxes 컬럼 정제
+train["box1"] = ""
+train["box2"] = ""
+for i in range(0, len(train["uid"])):
+    try:
+        if(train["boxes"][i] != np.nan):
+            train["box1"][i] = re.sub("\{|\}|\[|\]", "" ,re.sub("\}, \{", " / ", train["boxes"][i])).split(" / ")[0]
+            train["box2"][i] = re.sub("\{|\}|\[|\]", "", re.sub("\}, \{", " / ", train["boxes"][i])).split(" / ")[1]
+    except:
+        continue
+
+
+
+
+# 2) label 컬럼 정제
 print(train["label"][0])
 
 train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
