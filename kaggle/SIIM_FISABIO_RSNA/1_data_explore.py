@@ -15,7 +15,6 @@
 # label - the correct prediction label for the provided bounding boxes
 # ->
 
-
 import re
 import numpy as np
 import pandas as pd
@@ -54,6 +53,7 @@ print(train.columns)
 print(train.info())
 
 train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
+train = pd.read_csv("data/SIIM_FISABIO_RSNA/prep/train.csv")
 
 # boxes, label 컬럼 정제 필요
 # 1) boxes 컬럼 정제
@@ -67,9 +67,8 @@ for i in range(0, len(train["uid"])):
     except:
         continue
 
-
-
+del train["boxes"]
 
 # 2) label 컬럼 정제
 print(train["label"][0])
-
+re.search('opcity|', train["label"][0])
