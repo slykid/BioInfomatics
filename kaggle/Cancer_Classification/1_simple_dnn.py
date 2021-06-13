@@ -11,9 +11,6 @@ from tensorflow import keras as K
 
 #  train dataset
 train_patient = pd.read_csv("data/Cancer_Classification/train_data_clinical_patient.csv")
-train_cna = pd.read_csv("data/Cancer_Classification/train_data_cna.csv")
-train_mutation = pd.read_csv("data/Cancer_Classification/train_data_mutations.csv")
-train_rna = pd.read_csv("data/Cancer_Classification/train_data_rna-seq.csv")
 
 # test dataset
 test_patient = pd.read_csv("data/Cancer_Classification/test_data_clinical_patient_v1.csv")
@@ -302,3 +299,7 @@ history = model1.fit(train_dataset, epochs=100, validation_data=valid_dataset, v
 model1.trainable_variables
 
 result = np.argmax(model1.predict(x_test), -1)
+print(result)
+resultDF = pd.DataFrame([test_patient["id"], result])
+resultDF.column = ["id", "expected"]
+resultDF.to_csv("data/Cancer_Classification/submission.csv", index=False)
