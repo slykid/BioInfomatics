@@ -298,8 +298,12 @@ print(model1.summary())
 history = model1.fit(train_dataset, epochs=100, validation_data=valid_dataset, validation_steps=1)
 model1.trainable_variables
 
+id = list(test_patient["id"])
 result = np.argmax(model1.predict(x_test), -1)
+
+print(id)
 print(result)
-resultDF = pd.DataFrame([test_patient["id"], result])
-resultDF.column = ["id", "expected"]
+
+resultDF = pd.DataFrame(list(zip(id, result)), columns=["id", "expected"])
+print(resultDF)
 resultDF.to_csv("data/Cancer_Classification/submission.csv", index=False)
