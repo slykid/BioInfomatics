@@ -15,60 +15,184 @@
 # label - the correct prediction label for the provided bounding boxes
 # ->
 
+import os
 import re
+import gc
+import cv2
+import ast
+import cv2
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
+from sklearn.model_selection import StratifiedKFold
+from sklearn.utils.class_weight import compute_class_weight
+
 import tensorflow as tf
 
-train_study = pd.read_csv("data/SIIM_FISABIO_RSNA/train_study_level.csv")
-train_image = pd.read_csv("data/SIIM_FISABIO_RSNA/train_image_level.csv")
+import wandb # 0.10.33
+from wandb.keras import WandbCallback
 
-print(train_study.columns)
+wandb.login()
+
+# GPU 확인
+gpu = tf.config.list_physical_devices('GPU')
+if gpu:
+    try:
+        for unit in gpu:
+            tf.config.experimental.set_memory_growth(unit, True)
+        logical_gpu = tf.config.experimental.list_logical_devices('GPU')
+        print(len(gpu), "Physical GPU, ", len(logical_gpu), "Logical GPU")
+    except RuntimeError as e:
+        print(e)
+
+
+# 0. Hyperpameters
+TRAIN_PATH = "data/SIIM_FISABIO_RSNA/prep/resized-to-256px-jpg/"
+IMG_SIZE = 256
+NUM_SAMPLES_TO_VIZ = 32
+
+# 1. 데이터 확인
+train_image = pd.read_csv("data/SIIM_FISABIO_RSNA/train_image_level.csv")  # 6,054 / image
+train_study = pd.read_csv("data/SIIM_FISABIO_RSNA/train_study_level.csv")  # 6,334 / label
+
+print(train_image.columns)  # 'id', 'boxes', 'label', 'StudyInstanceUID'
+print(train_image.info())
+print(train_study.columns)  # 'id', 'Negative for Pneumonia', 'Typical Appearance', 'Indeterminate Appearance', 'Atypical Appearance'
 print(train_study.info())
 
-# study id, image id 컬럼 값 정제
-train_study["uid"] = ""
-for i in range(0, len(train_study["id"])):
-    train_study["uid"][i] = re.sub("_study", "", str(train_study["id"][i]))
+# image 데이터 정제
+train_image["id"] = train_image.apply(lambda row: row.id.split('_')[0], axis=1)
+train_image["path"] = train_image.apply(lambda row: TRAIN_PATH + row.id + ".jpg", axis=1)  # 이미지 경로 저장
+train_image["image_level"] = train_image.apply(lambda row: row.label.split(' ')[0], axis=1)
 
-train_image["image_id"] = ""
-for i in range(0, len(train_image["id"])):
-    train_image["image_id"][i] = re.sub("_image", "", str(train_image["id"][i]))
-
-print(train_study["uid"])
-print(train_image["image_id"])
+# study 데이터 정제
+train_study["id"] = train_study.apply(lambda row: row.id.split('_')[0], axis=1)
+train_study.columns = ['StudyInstanceUID', 'Negative for Pneumonia', 'Typical Appearance', 'Indeterminate Appearance', 'Atypical Appearance']
 
 # train 데이터 결합
-# left="id_1", right="StudyInstanceUID"
-train = pd.merge(train_study, train_image, left_on="uid", right_on="StudyInstanceUID")
+train = train_image.merge(train_study, on='StudyInstanceUID', how="left")
 print(train.columns)
+# 'id', 'boxes', 'label', 'StudyInstanceUID', 'path', 'image_level',
+# 'Negative for Pneumonia', 'Typical Appearance',
+# 'Indeterminate Appearance', 'Atypical Appearance'
 
-train.columns = ["study_id", "negative_pneumonia", "typical_appearance", "indeterminate_appearance", "atypical_appearance", "uid", "id_y", "boxes", "label", "study_uid", "image_id"]
-print(train.columns)
+print(train.loc[0])
 
-train = train[["uid", "image_id", "negative_pneumonia", "typical_appearance", "indeterminate_appearance", "atypical_appearance", "boxes", "label"]]
-print(train.columns)
-print(train.info())
+# 학습 데이터 수 확인
+print(f"Number of unique image in training dataset: {len(train)}")
+
+# 박스가 없는 데이터 수
+bbox_nan_num = train['boxes'].isna().sum()
+print(f"Number of images without any bbox annotation: {bbox_nan_num}")
+
+labels = train[["Negative for Pneumonia","Typical Appearance","Indeterminate Appearance","Atypical Appearance"]].values
+labels = np.argmax(labels, axis=1)
+
+train['study_level'] = labels
+print(train.loc[0])
+
+class_label_to_id = {
+    'Negative for Pneumonia': 0,
+    'Typical Appearance': 1,
+    'Indeterminate Appearance': 2,
+    'Atypical Appearance': 3
+}
+
+class_id_to_label = {val: key for key, val in class_label_to_id.items()}
+
+# 각 id 에 대한 이미지 정보
+meta_df = pd.read_csv("data/SIIM_FISABIO_RSNA/meta.csv")
+train_meta_df = meta_df.loc[meta_df.split == "train"]
+train_meta_df.columns = ["id", "dim0", "dim1", "split"]
+
+train = train.merge(train_meta_df, on="id", how="left")
 
 train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
 train = pd.read_csv("data/SIIM_FISABIO_RSNA/prep/train.csv")
 
-# boxes, label 컬럼 정제 필요
-# 1) boxes 컬럼 정제
-train["box1"] = ""
-train["box2"] = ""
-for i in range(0, len(train["uid"])):
-    try:
-        if(train["boxes"][i] != np.nan):
-            train["box1"][i] = re.sub("\{|\}|\[|\]", "" ,re.sub("\}, \{", " / ", train["boxes"][i])).split(" / ")[0]
-            train["box2"][i] = re.sub("\{|\}|\[|\]", "", re.sub("\}, \{", " / ", train["boxes"][i])).split(" / ")[1]
-    except:
-        continue
+# 박스 치기
+opacity_df = train.dropna(subset = ["boxes"], inplace=False)
+opacity_df = opacity_df.reset_index(drop=True)
 
-del train["boxes"]
+# 박스 생성
+def get_bbox(row):
+    bboxes = []
+    bbox = []
+    for i, l in enumerate(row.label.split(' ')):
+        if (i % 6 == 0) | (i % 6 == 1):
+            continue
+        bbox.append(float(l))
+        if i % 6 == 5:
+            bboxes.append(bbox)
+            bbox = []
 
-# 2) label 컬럼 정제
-print(train["label"][0])
-re.search('opcity|', train["label"][0])
+    return bboxes
+
+# 스케일링 박스
+def scale_bbox(row, bboxes):
+    # Get scaling factor
+    scale_x = IMG_SIZE / row.dim1
+    scale_y = IMG_SIZE / row.dim0
+
+    scaled_bboxes = []
+    for bbox in bboxes:
+        x = int(np.round(bbox[0] * scale_x, 4))
+        y = int(np.round(bbox[1] * scale_y, 4))
+        x1 = int(np.round(bbox[2] * (scale_x), 4))
+        y1 = int(np.round(bbox[3] * scale_y, 4))
+
+        scaled_bboxes.append([x, y, x1, y1])  # xmin, ymin, xmax, ymax
+
+    return scaled_bboxes
+
+
+def wandb_bbox(image, bboxes, true_label, class_id_to_label):
+    all_boxes = []
+    for bbox in bboxes:
+        box_data = {"position": {
+            "minX": bbox[0],
+            "minY": bbox[1],
+            "maxX": bbox[2],
+            "maxY": bbox[3]
+        },
+            "class_id": int(true_label),
+            "box_caption": class_id_to_label[true_label],
+            "domain": "pixel"}
+        all_boxes.append(box_data)
+
+    return wandb.Image(image, boxes={
+        "ground_truth": {
+            "box_data": all_boxes,
+            "class_labels": class_id_to_label
+        }
+    })
+
+sampled_df = opacity_df.sample(NUM_SAMPLES_TO_VIZ).reset_index(drop=True)
+run = wandb.init(project='kaggle-covid',
+                 config={'competition': 'siim-fisabio-rsna', '_wandb_kernel': 'slykid'},
+                 job_type='visualize_sample_bbox')
+
+wandb_bbox_list = []
+for i in tqdm(range(NUM_SAMPLES_TO_VIZ)):
+    row = sampled_df.loc[i]
+    # Load image
+    image = cv2.imread(row.path)
+
+    # Get bboxes
+    bboxes = get_bbox(row)
+
+    # Scale bounding boxes
+    scale_bboxes = scale_bbox(row, bboxes)
+
+    # Get ground truth label
+    true_label = row.study_level
+
+    wandb_bbox_list.append(wandb_bbox(image,
+                                      scale_bboxes,
+                                      true_label,
+                                      class_id_to_label))
+
+wandb.log({"radiograph": wandb_bbox_list})
+run.finish()
