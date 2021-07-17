@@ -13,7 +13,6 @@
 # id - unique image identifier
 # boxes - bounding boxes in easily-readable dictionary format
 # label - the correct prediction label for the provided bounding boxes
-# ->
 
 import os
 import re
@@ -47,9 +46,8 @@ if gpu:
     except RuntimeError as e:
         print(e)
 
-
 # 0. Hyperpameters
-TRAIN_PATH = "data/SIIM_FISABIO_RSNA/prep/resized-to-256px-jpg/"
+TRAIN_PATH = "data/SIIM_FISABIO_RSNA/prep/resized-to-256px-jpg/train/"
 IMG_SIZE = 256
 NUM_SAMPLES_TO_VIZ = 32
 
@@ -110,7 +108,6 @@ train_meta_df.columns = ["id", "dim0", "dim1", "split"]
 train = train.merge(train_meta_df, on="id", how="left")
 
 train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
-train = pd.read_csv("data/SIIM_FISABIO_RSNA/prep/train.csv")
 
 # 박스 치기
 opacity_df = train.dropna(subset = ["boxes"], inplace=False)
@@ -147,7 +144,7 @@ def scale_bbox(row, bboxes):
 
     return scaled_bboxes
 
-
+# interactive image
 def wandb_bbox(image, bboxes, true_label, class_id_to_label):
     all_boxes = []
     for bbox in bboxes:
