@@ -15,25 +15,15 @@
 # label - the correct prediction label for the provided bounding boxes
 
 import os
-import re
-import gc
 import cv2
-import ast
-import cv2
-from tqdm import tqdm
+import pydicom
+import glob
+from PIL import Image
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from sklearn.model_selection import StratifiedKFold
-from sklearn.utils.class_weight import compute_class_weight
-
 import tensorflow as tf
-
-import wandb # 0.10.33
-from wandb.keras import WandbCallback
-
-wandb.login()
 
 # GPU 확인
 gpu = tf.config.list_physical_devices('GPU')
@@ -50,6 +40,14 @@ if gpu:
 TRAIN_PATH = "data/SIIM_FISABIO_RSNA/prep/resized-to-256px-jpg/train/"
 IMG_SIZE = 256
 NUM_SAMPLES_TO_VIZ = 32
+
+class_label_to_id = {
+    'Negative for Pneumonia': 0,
+    'Typical Appearance': 1,
+    'Indeterminate Appearance': 2,
+    'Atypical Appearance': 3
+}
+class_id_to_label = {val: key for key, val in class_label_to_id.items()}
 
 # 1. 데이터 확인
 train_image = pd.read_csv("data/SIIM_FISABIO_RSNA/train_image_level.csv")  # 6,054 / image
@@ -91,14 +89,8 @@ labels = np.argmax(labels, axis=1)
 train['study_level'] = labels
 print(train.loc[0])
 
-class_label_to_id = {
-    'Negative for Pneumonia': 0,
-    'Typical Appearance': 1,
-    'Indeterminate Appearance': 2,
-    'Atypical Appearance': 3
-}
-
-class_id_to_label = {val: key for key, val in class_label_to_id.items()}
+train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
+train = pd.read_csv("data/SIIM_FISABIO_RSNA/prep/train.csv")
 
 # 각 id 에 대한 이미지 정보
 meta_df = pd.read_csv("data/SIIM_FISABIO_RSNA/meta.csv")
@@ -108,88 +100,3 @@ train_meta_df.columns = ["id", "dim0", "dim1", "split"]
 train = train.merge(train_meta_df, on="id", how="left")
 
 train.to_csv("data/SIIM_FISABIO_RSNA/prep/train.csv", index=False)
-
-# 박스 치기
-opacity_df = train.dropna(subset = ["boxes"], inplace=False)
-opacity_df = opacity_df.reset_index(drop=True)
-
-# 박스 생성
-def get_bbox(row):
-    bboxes = []
-    bbox = []
-    for i, l in enumerate(row.label.split(' ')):
-        if (i % 6 == 0) | (i % 6 == 1):
-            continue
-        bbox.append(float(l))
-        if i % 6 == 5:
-            bboxes.append(bbox)
-            bbox = []
-
-    return bboxes
-
-# 스케일링 박스
-def scale_bbox(row, bboxes):
-    # Get scaling factor
-    scale_x = IMG_SIZE / row.dim1
-    scale_y = IMG_SIZE / row.dim0
-
-    scaled_bboxes = []
-    for bbox in bboxes:
-        x = int(np.round(bbox[0] * scale_x, 4))
-        y = int(np.round(bbox[1] * scale_y, 4))
-        x1 = int(np.round(bbox[2] * (scale_x), 4))
-        y1 = int(np.round(bbox[3] * scale_y, 4))
-
-        scaled_bboxes.append([x, y, x1, y1])  # xmin, ymin, xmax, ymax
-
-    return scaled_bboxes
-
-# interactive image
-def wandb_bbox(image, bboxes, true_label, class_id_to_label):
-    all_boxes = []
-    for bbox in bboxes:
-        box_data = {"position": {
-            "minX": bbox[0],
-            "minY": bbox[1],
-            "maxX": bbox[2],
-            "maxY": bbox[3]
-        },
-            "class_id": int(true_label),
-            "box_caption": class_id_to_label[true_label],
-            "domain": "pixel"}
-        all_boxes.append(box_data)
-
-    return wandb.Image(image, boxes={
-        "ground_truth": {
-            "box_data": all_boxes,
-            "class_labels": class_id_to_label
-        }
-    })
-
-sampled_df = opacity_df.sample(NUM_SAMPLES_TO_VIZ).reset_index(drop=True)
-run = wandb.init(project='kaggle-covid',
-                 config={'competition': 'siim-fisabio-rsna', '_wandb_kernel': 'slykid'},
-                 job_type='visualize_sample_bbox')
-
-wandb_bbox_list = []
-for i in tqdm(range(NUM_SAMPLES_TO_VIZ)):
-    row = sampled_df.loc[i]
-    # Load image
-    image = cv2.imread(row.path)
-
-    # Get bboxes
-    bboxes = get_bbox(row)
-
-    # Scale bounding boxes
-    scale_bboxes = scale_bbox(row, bboxes)
-
-    # Get ground truth label
-    true_label = row.study_level
-
-    wandb_bbox_list.append(wandb_bbox(image,
-                                      scale_bboxes,
-                                      true_label,
-                                      class_id_to_label))
-
-wandb.log({"radiograph": wandb_bbox_list})
-run.finish()
